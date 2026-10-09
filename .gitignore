@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# handbook PDFs are not committed
+handbook/
+*.pdf
