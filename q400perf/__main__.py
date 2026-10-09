@@ -16,6 +16,23 @@ import csv
 import sys
 
 from .calc import CONFIGS, PerfError, assumed_temperature, calculate, find_runway, load, select_tables
+from .speedbook import load_speedbook, pressure_altitude, takeoff_speeds
+
+SPEEDBOOK = load_speedbook()
+
+
+def apply_speedbook(r):
+    """Fill V1/VR/V2 from the speed book for the TOW (unless the table or the user gave speeds)."""
+    if r.tow_kg is None or r.speeds_source is not None:
+        return
+    pa = pressure_altitude(r.runway["meta"]["elevation"], r.qnh)
+    power_temp = r.assumed_temp if r.assumed_temp is not None else r.oat
+    sp = takeoff_speeds(SPEEDBOOK, r.tow_kg, r.flaps, pa, power_temp, r.oat, r.max_v1)
+    r.v1, r.vr, r.v2, r.vfri, r.vclimb = sp.v1, sp.vr, sp.v2, sp.vfri, sp.vclimb
+    r.speeds_source = (f"speed book {sp.weight_page} kg page, PA {pa:.0f} ft, "
+                       f"V1/VR additive +{sp.v1vr_additive}"
+                       + (f", min V2 additive +{sp.v2_additive}" if sp.v2_additive else ""))
+    r.notes.extend(sp.notes)
 
 
 def add_condition_args(p):
@@ -48,11 +65,12 @@ def fmt_result(r):
         lines.append(f"  Torque    {r.torque:>6} %")
     if r.max_v1 is not None:
         lines.append(f"  MAX V1    {r.max_v1:>6} kt")
-    if r.v1 is not None:
-        lines.append(f"  V1 / VR / V2   {r.v1} / {r.vr if r.vr is not None else '--'} / "
-                     f"{r.v2 if r.v2 is not None else '--'} kt")
+    if r.vr is not None:
+        lines.append(f"  V1 / VR / V2   {r.v1} / {r.vr} / {r.v2} kt   ({r.speeds_source})")
+        if r.vfri is not None:
+            lines.append(f"  VFRI {r.vfri} kt   VCLIMB (flaps 0) {r.vclimb} kt")
     elif r.max_v1 is not None:
-        lines.append("  V1 = speed-card V1, not above MAX V1; VR, V2 from the speed card")
+        lines.append("  V1 / VR / V2: give --tow for speed book speeds (V1 not above MAX V1)")
     efp = rw.get("engine_failure")
     if efp and efp["procedure"]:
         lines.append("  EFP: " + rw["efp"] + "  " + "  ".join(f"{k}: {v}" for k, v in efp["procedure"].items()))
@@ -79,6 +97,7 @@ def run_one(runways, airport, runway, a, out_rows=None, quiet=False):
             card = parse_card(getattr(a, "card", None))
             r = calculate(rw, t, a.oat, tow_kg=getattr(a, "tow", None), card_v1=card[0], card_vr=card[1],
                           card_v2=card[2], **kw)
+        apply_speedbook(r)
         results.append(r)
     return results
 
@@ -96,15 +115,17 @@ def parse_card(s):
 
 
 CSV_FIELDS = ["airport", "city", "runway", "flaps", "bleeds", "condition", "oat", "qnh", "wind", "assumed_temp",
-              "mrtw_kg", "limit", "max_v1", "v1", "vr", "v2", "torque", "climb_limit_kg", "notes", "source"]
+              "tow_kg", "mrtw_kg", "limit", "max_v1", "v1", "vr", "v2", "vfri", "vclimb", "torque",
+              "climb_limit_kg", "speeds_source", "notes", "source"]
 
 
 def csv_row(r):
     return {"airport": r.runway["iata"], "city": r.runway["city"], "runway": r.runway["runway"],
             "flaps": r.flaps, "bleeds": r.table["bleeds"], "condition": r.table["condition"], "oat": r.oat,
-            "qnh": r.qnh, "wind": r.wind, "assumed_temp": r.assumed_temp, "mrtw_kg": r.mrtw_kg,
-            "limit": r.limit, "max_v1": r.max_v1, "v1": r.v1, "vr": r.vr, "v2": r.v2, "torque": r.torque,
-            "climb_limit_kg": r.climb_limit_kg, "notes": "; ".join(r.notes), "source": r.table["source"]}
+            "qnh": r.qnh, "wind": r.wind, "assumed_temp": r.assumed_temp, "tow_kg": r.tow_kg,
+            "mrtw_kg": r.mrtw_kg, "limit": r.limit, "max_v1": r.max_v1, "v1": r.v1, "vr": r.vr, "v2": r.v2,
+            "vfri": r.vfri, "vclimb": r.vclimb, "torque": r.torque, "climb_limit_kg": r.climb_limit_kg,
+            "speeds_source": r.speeds_source, "notes": "; ".join(r.notes), "source": r.table["source"]}
 
 
 def cmd_list(runways, a):
@@ -137,9 +158,10 @@ def cmd_all(runways, a):
             print(f"{rw['iata']:<4} {rw['runway']:<14}  -- {e}")
             continue
         for r in res:
-            sp = f"{r.v1}/{r.vr}/{r.v2}" if r.vr else ""
+            sp = f"{r.v1}/{r.vr}/{r.v2}" if r.vr is not None else ""
+            over = "  TOW > MRTW" if r.tow_kg is not None and r.tow_kg > r.mrtw_kg else ""
             print(f"{rw['iata']:<4} {rw['runway']:<14} {r.flaps:>3} {r.mrtw_kg:>8} {r.limit:>3} "
-                  f"{r.max_v1 if r.max_v1 else '':>5} {sp:>11} {r.torque if r.torque else '':>5}")
+                  f"{r.max_v1 if r.max_v1 else '':>5} {sp:>11} {r.torque if r.torque else '':>5}{over}")
             rows.append(csv_row(r))
     if a.csv:
         write_csv(a.csv, rows)
@@ -187,13 +209,14 @@ def main(argv=None):
     p.add_argument("airport", help="IATA code, e.g. ADD")
     p.add_argument("runway", help="runway as in the handbook, e.g. 25R, 07L/B1, 04-SW700M")
     add_condition_args(p)
-    p.add_argument("--tow", type=float, help="actual takeoff weight, kg")
-    p.add_argument("--card", help="V1/VR/V2 from the speed card for the TOW; V1 is capped at MAX V1")
+    p.add_argument("--tow", type=float, help="actual takeoff weight, kg: gives speed book V1/VR/V2")
+    p.add_argument("--card", help="override: V1/VR/V2 entered by hand; V1 is capped at MAX V1")
     p.add_argument("--assumed", action="store_true", help="find assumed temperature for reduced power")
     p.add_argument("--min-torque", type=float, help="AFM minimum torque for reduced power, %%")
 
     p = sub.add_parser("all", help="every airport/runway in the handbook for one set of conditions")
     add_condition_args(p)
+    p.add_argument("--tow", type=float, help="takeoff weight, kg: adds speed book V1/VR/V2")
     p.add_argument("--csv", help="also write results to this CSV file")
 
     p = sub.add_parser("batch", help="conditions per runway from a CSV file")

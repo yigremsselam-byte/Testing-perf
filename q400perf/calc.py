@@ -65,6 +65,9 @@ class Result:
     notes: list = field(default_factory=list)
     tow_kg: Optional[float] = None
     assumed_temp: Optional[int] = None
+    vfri: Optional[int] = None
+    vclimb: Optional[int] = None
+    speeds_source: Optional[str] = None
 
     @property
     def flaps(self):
@@ -210,11 +213,12 @@ def calculate(rw, table, oat, qnh=1013.0, wind=0.0, headwind_credit=True, high_q
         res.vr = int(math.ceil(v["vr"]))
         res.v2 = int(math.ceil(v["v2"]))
         res.v1 = min(int(math.floor(v["v1"])), res.vr)
-        res.notes.append("Supplement 3 (tailwind 10-20 kt) speeds")
+        res.speeds_source = "runway analysis, Supplement 3 (tailwind 10-20 kt)"
     if tow_kg is not None and tow_kg > res.mrtw_kg:
         res.notes.append(f"TOW {tow_kg:.0f} kg EXCEEDS MRTW {res.mrtw_kg} kg")
     if card_vr is not None:
         res.vr, res.v2 = card_vr, card_v2
+        res.speeds_source = "entered speed card"
     if card_v1 is not None:
         if res.max_v1 is not None and card_v1 > res.max_v1:
             res.notes.append(f"V1 {card_v1} reduced to MAX V1 {res.max_v1} (VR and V2 unchanged)")
