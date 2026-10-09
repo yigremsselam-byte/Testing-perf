@@ -33,7 +33,28 @@ Additive tables are interpolated linearly and rounded **up**. The book has no ex
 above 10,000 ft or 50 °C is an error. Below 0 ft or −54 °C uses the edge row or column.
 The speed book warns that its speeds are based on V1/VR = 1, not a balanced field.
 
-## Usage
+## iPad app
+
+`dist/q400-takeoff.html` is the same calculator as a single offline web page for iPad (or any
+browser). It contains all the handbook and speed book data and needs no network connection.
+Fonts load from the web when available and fall back to system fonts offline.
+
+* Open it in Safari, then **Share → Add to Home Screen** to get a full-screen app icon.
+  To get the file onto the iPad, AirDrop it, or save it to Files and open it from there.
+* Pick the airport and runway. Enter OAT, QNH, wind (Head/Tail) and takeoff weight.
+  V1/VR/V2, MRTW, MAX V1 and warnings update as you type.
+* **All runways at this airport** shows the same conditions on every runway. Tap a row to select it.
+* The last inputs are remembered on the device.
+
+The page's engine (`web/engine.js`) is a line-by-line port of the Python rules.
+`tests/test_web_parity.py` runs both on 4,000 random cases and requires identical results.
+Rebuild after any data or code change:
+
+```sh
+python web/build.py        # writes dist/q400-takeoff.html
+```
+
+## Usage (command line)
 
 Python 3.9+, standard library only (the extractor also needs `pdfplumber`).
 
@@ -116,7 +137,7 @@ appears twice in the scan. Checks applied:
 ## Tests
 
 ```sh
-python -m unittest discover -s tests
+python -m unittest discover -s tests     # the web parity test needs node
 ```
 
 Expected values in the tests were read directly from the handbook and speed book page images.
